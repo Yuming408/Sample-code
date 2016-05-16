@@ -1,0 +1,196 @@
+---
+title: "loan Analysis Based on Report from Prosper"
+author: "Yuming Mansfield"
+date: "August 8, 2015"
+output:   
+  html_document:
+    toc: true
+   
+
+---
+## Summary
+This report invesitigated loan data from Prosper. The csvfile contains load data, including the current loan status and the lastes payment information. It is avaliable from from this website [Prosper data](https://www.prosper.com/tools/DataExport.aspx). Analysis was focused on exploring relationships among different variables and provided insightful suggestions for investors on which loans are worth to invest. Variables analysied in this report are income range, loan amount, loan state, credit grade, if borrowers home owner, loan status, investors, listing caterogy.
+
+## Hypothesis 1: The distribution of loan amount is right skewed
+Borrowers tend to borrow lower amount of loan. But this distribution could shift for borrowers with higher income.
+Variables analysied: loan amount, income range
+
+```{r, message=FALSE, echo = F}
+require("rpart")
+require("zoo")
+library(zoo)
+library(ggplot2)
+library(rpart)
+
+df <- read.csv("hw5-prosperLoanData.csv", stringsAsFactors = TRUE)
+names(df)<-tolower(names(df))
+
+df$incomerange <- sub('Not displayed', 'Others', df$incomerange)
+
+#combine "Not employed" and "$0" to the same income range level
+df$incomerange <- sub('Not employed', '$0', df$incomerange)
+df$loanoriginalamount <- df$loanoriginalamount/1000
+```
+
+The following boxplot shows borrowers with income under $25,000 tend to borrow loan below $8,000 and the distribution is significantly right skewed. The loan amount increases as borrowers income increases. The distribution is also less skewed to the right.
+
+```{r, fig.width = 8, fig.height = 5, fig.align = 'center', echo = F}
+ggplot(df, aes(x = incomerange, y = loanoriginalamount, fill = incomerange))+
+  geom_boxplot() +
+  xlab("Income Range") + ylab("Loan Amount ($k)") + 
+  ggtitle("Loan Amount versus Income Range") +
+  theme_classic()+
+  theme(legend.title=element_blank(), plot.title=element_text(family="Times", face="bold", size=15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Hypothesis 2: The amount of borrowers varied among different states, and the average loan amount varied by states as well
+There are more borrowers in states where cost living is higher. The average amount of loan is higher compared to the states with low cost living. 
+
+```{r, echo = F}
+# States as "" is converted to "Others"
+levels(df$borrowerstate)[levels(df$borrowerstate)==""] <- "Others"
+a <- df[!df$borrowerstate=="Others", ]
+a$borrowerstate <- factor(a$borrowerstate)
+
+# Return the trimed mean of loan amount for each state
+loan_by_state <- aggregate(loanoriginalamount ~ borrowerstate, a, function(x){mean(x, trim = 0.1, na.rm = T)})
+loan_by_state<-loan_by_state[order(-loan_by_state$loanoriginalamount),]
+b <- data.frame(table(a$borrowerstate))
+```
+
+The following plots show the average (trimed 10% of mean) amount of loan and the amount of borrowers for each state. California has the hightest number of borrowers but DC has the highest average amount of loan.
+
+```{r, fig.width = 6, fig.height = 6, fig.align = 'center', echo = F}
+ggplot(loan_by_state, aes(reorder(borrowerstate, loanoriginalamount),loanoriginalamount) )+
+  geom_bar(stat="identity", colour = 'black', fill = 'green', alpha = 0.5) + 
+  coord_flip() + theme_classic() +
+  xlab('State') + ylab('Average Loan Amount $k') +
+  ggtitle('Average Loan Amount versus State') +
+  theme(plot.title=element_text(family="Times", face="bold", size=15))
+```
+
+```{r, fig.width = 6, fig.height = 6, fig.align = 'center', echo = F}
+ggplot(b, aes(reorder(Var1, Freq), Freq)) +
+  geom_bar(stat = 'identity', colour = 'black', fill = 'lightblue') + coord_flip() +
+  ylab('Number of Borrowers') + xlab('State') +
+  ggtitle('Number of Borrowers versus State') + 
+  theme(plot.title=element_text(family="Times", face="bold", size=15)) +
+  theme_classic()
+```
+
+## Hypothesis 3: If borrower owns a home, the loan from that borrower tends to be higher
+
+In this analysis, the variables "IsHomeOwner" and "LoanAmount" were investigated. It is assumed that home owners are more stable in financial status. Thereby when they need a loan, the amount tends to be in the upper range
+
+```{r, echo = F}
+#Change level name
+levels(df$isborrowerhomeowner)[levels(df$isborrowerhomeowner)=="False"] <- "No"
+levels(df$isborrowerhomeowner)[levels(df$isborrowerhomeowner)=="True"] <- "Yes"
+```
+
+The following plot clearly shows for borrowers that are home owners, their loan amount is higher and the distribution is less skewed than borrowers that are not home owners. The t test under 95% of confidence level also confirms home owners borrow more loan than people are not home owners
+```{r, fig.width = 6, fig.height = 5, fig.align = 'center', echo = F}
+ggplot(df, aes(x = isborrowerhomeowner, y = loanoriginalamount, fill = isborrowerhomeowner)) +
+  geom_boxplot() +
+  xlab("If Borrower Homeower") + ylab("Loan Amount ($k)") + 
+  ggtitle("Loan Amount versus If Borrower Homeowner") +
+  theme_classic()+
+  theme(plot.title=element_text(family="Times", face="bold", size=15)) +
+  scale_fill_discrete(name = "If Home Owner")
+```
+
+```{r, echo = F}
+#t test for if home owner borrows more loan then non home owner
+IsHomeOwner <- subset(df, isborrowerhomeowner == 'Yes', select = loanoriginalamount)
+NotHomeOwner <- subset(df, isborrowerhomeowner == 'No', select = loanoriginalamount)
+t.test(IsHomeOwner, NotHomeOwner, alternative = "greater", conf.level = 0.95)
+```
+
+## Hypothesis 4: Borrowers' Prosper rating and loan amount affect their loan status. Borrowers have higher rating with lower loan amount tend to pay their loan on time
+This part of analysis explores three variables: loan amount, Prosper rating, and loan status. There are about 25% missing values for Prosper rating. Using rpart which is for 'Recursive Partitioning and Regression Trees' to predict the rating bases on lower credit score, income range, and number of investors.
+
+```{r, warning = F, echo = F}
+a <- df[!df$prosperrating..alpha.=="", ]
+b <- df[df$prosperrating..alpha.=="", ]
+
+#using rpart to predit Prosper rate based on 
+fit <- rpart(prosperrating..alpha. ~ creditscorerangelower + investors, data = a, method = "class")
+df$prosperrating..alpha.[df$prosperrating..alpha.==""] <- predict(fit, b, type = 'class')
+```
+
+The plot shows borrowers whose status are chargedoff or defaulted have all different ratings from AA to HR. which does not support the hypothesis that higher rating indicates good loan status. If loan status is chargedoff, the loan amount is typically below $20k. For loan amount that is over $20k, highly likely the borrowers pay loan on time. In most loan status, borrowers have higher rating tend to borrow more loan than borrowers have lower rating. However, for loan status that are completed, borrowers have 'B' rating borrow more loans than any other rating. 
+
+```{r, fig.width = 9, fig.height = 5, fig.align = 'center', echo = F}
+ggplot(df, aes(x = loanstatus, y = loanoriginalamount))+
+  geom_boxplot(aes(fill = prosperrating..alpha.)) +
+  xlab("Loan Status") + ylab("Loan Amount ($k)") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Borrowers Loan Amount in Different Income Range with Different Prosper Rating") +
+  theme(plot.title=element_text(family="Times", face="bold", size=15)) +
+  scale_fill_discrete(name = "Prosper Rating")
+```
+
+## Hypothesis 5: Borrowers have higher income tend to have better loan status
+In continuing of hypothese 4, this time, we are looking at the number of borrowers for each loan status and their coresponding income range. Results are presented in terms of percentage of borrowers in their income range for their loan status
+
+```{r, echo = F}
+loan_by_income_sta <- aggregate(listingkey ~ incomerange + loanstatus, df, length)
+income_count <- data.frame(table(df$incomerange))
+names(income_count) <- c('incomerange', 'frequency')
+d <- merge(loan_by_income_sta, income_count)
+d$percent <- d$listingkey / d$frequency * 100
+quantile_range <- quantile(d$percent, probs = seq(0, 1, 0.05))
+color_palette <- colorRampPalette(c("#3794bf", "#FFFFFF", "#df8640"))(length(quantile_range) - 1)
+label_text <- rollapply(round(quantile_range, 2), width = 2, by = 1, FUN = function(i) paste(i, collapse = " : "))
+d$percent_range <- findInterval(d$percent, quantile_range, all.inside = TRUE)
+```
+
+The heatmap below shows there are about 29% to 36% of borrowers who does not have income, their loan status is chargedoff. For borrowers whose income is under $25,000, there is about 14% to 21% of them whose loan status is chargedoff. The rest of borrowers whose loan status is chargedoff are about 6% to 14% in their corresponding income range. For borrowers' income above $50,000, about 54% to 63% of them have loan status as current.
+
+```{r, fig.width = 8, fig.height = 8, fig.align = 'center', echo = F}
+ggplot(d, aes(incomerange, loanstatus, fill = factor(percent_range) )) + 
+  geom_tile(colour = "black") + 
+  scale_fill_manual(values = color_palette, name = "Percentage", labels = label_text) +
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle('Pentage of Borrowers in Each Income Range versus Loan Status') + 
+  xlab('Income Range') + ylab('Loan Status') +
+  theme(plot.title=element_text(family="Times", face="bold", size=15))
+  
+```
+
+## Hypothesis 6: Number of investors each loan has and loan isting category can affect loan status
+This part of analysis investigated the relationship between number of investor, listing category and loan status. The code for each listing category is shown in the following table:
+
+```{r, echo = F}
+e <- df[!df$listingcategory..numeric. == 0, ]
+e$listingcategory..numeric. <- factor(e$listingcategory..numeric.)
+
+#Table for Listing Category Code
+data.frame(Code = seq(1, 20, 1), Name = c("Debt Consolidation", "Home Improvement", "Business", "Personal Loan", 
+                                          "Student Use", "Auto", "Ohter", "Baby$Adoption", "Boat", "Cosmetic Procedure",                                            "Engament Ring", "Green Loans", "Household Expenses", "Large Purchases",                                                  "Medical/Dental", "Motorcycle", "RV", "Taxes", "Vacation", "Wedding Loans"))
+```
+
+The following plot shows for loan's category listed as 1, 2, 3, 4, 6, 7, 13, there are more loans makred as chargedoff. There are more investors invest loans that are either completed or current. However, the amount of investors associated with loan as chargedoff or defaulted are quite high.
+
+```{r, fig.width = 8, fig.height = 5, fig.align = 'center', echo = F}  
+ggplot(e, aes(loanstatus, listingcategory..numeric.))+
+  geom_jitter(alpha = 0.4) +
+  xlab("Loan Status") + ylab("Listing Category") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Lising Category versus Loan Status for Loan Listed") +
+  theme(plot.title=element_text(family="Times", face="bold", size=15))
+```
+
+```{r, fig.width = 8, fig.height = 5, fig.align = 'center', echo = F}
+ggplot(df, aes(loanstatus, investors))+
+  geom_jitter(alpha = 0.4) +
+  xlab("Loan Status") + ylab("Amount of Investor") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Amount of Investors versus Loan Status for Loan Listed") +
+  theme(plot.title=element_text(family="Times", face="bold", size=15))
+```
+
+                                            

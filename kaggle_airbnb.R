@@ -1,19 +1,9 @@
-#install.packages('Amelia')
-#install.packages('zoo')
-#install.packages('xgboost')
-#install.packages(('caret'))
+
 install.packages("h2o", type="source", repos=(c("http://h2o-release.s3.amazonaws.com/h2o/rel-tibshirani/8/R")))
-#library(data.table)
-#library(Amelia)
 library(h2o)
-#library(zoo)
 library(stringr)
-#library(xgboost)
-#library(caret)
-#library(car)
-#library(plyr)
 library(reshape2)
-#library(rpart)
+
 
 setwd("/Users/yumingfang/Documents/airbnb competation/")
 list.files()
@@ -27,9 +17,7 @@ test <- read.csv("test_users.csv", na.strings = c(""))
 session <- read.csv("sessions.csv", na.strings = c(""))
 summary(session)
 
-#train <- h2o.importFile(normalizePath("train_users_2.csv"), col.types = list(by.col.name = c("date_account_created", "timestamp_first_active"),types=c("string")))
-#test <- h2o.importFile(normalizePath("test_users.csv"), col.types = list(by.col.name = c("date_account_created", "timestamp_first_active"),types=c("string")))
-
+# remove extra features
 response <- train$country_destination
 train <- train[, -which(names(train) %in% c("date_first_booking", "country_destination"))]
 n <- nrow(train)
@@ -55,7 +43,6 @@ alldata$tfa_yr <- sapply(tfa, USE.NAMES = F,function(x){substr(x, 1, 4)})
 alldata$tfa_mon <- sapply(tfa, USE.NAMES = F,function(x){substr(x, 5, 6)})
 alldata$tfa_day <- sapply(tfa, USE.NAMES = F,function(x){substr(x, 7, 8)})
 alldata <- alldata[, -2]
-
 alldata$tfa_yr <- as.factor(alldata$tfa_yr)
 alldata$tfa_mon <- as.factor(alldata$tfa_mon)
 alldata$tfa_day <- as.factor(alldata$tfa_day)
@@ -71,8 +58,6 @@ aaa = .bincode(alldata$age,bins, include.lowest = T)
 alldata$age_bin = aaa
 
 #fill NA for first_affiliate_tracted
-#alldata$first_affiliate_tracked <- factor(alldata$first_affiliate_tracked, levels = c(levels(alldata$first_affiliate_tracked), "n/a"))
-#tt <- table(alldata$first_affiliate_tracked)
 alldata$first_affiliate_tracked[is.na(alldata$first_affiliate_tracked)] <- names(tt[which.max(tt)])
 table(alldata$first_affiliate_tracked)
 
@@ -80,6 +65,7 @@ table(alldata$first_affiliate_tracked)
 train <- alldata[1:n, ]
 test <- alldata[(n+1):m, ]
 train$country <- response
+
 #remove na of session
 session <- session[!is.na(session$user_id), ]
 session <- session[!is.na(session$action), ]
@@ -93,8 +79,6 @@ session_comb <- a[a$user_id %in% act_dt$user_id, ]
 session_comb$action_type <- as.factor(act_ty$action_type)
 session_comb$action_detail <- as.factor(act_dt$action_detail)
 session_comb <- merge(session_comb,time, by = "user_id", all.x = T)
-#session_comb$lang_multi <- lang_mul$action
-#session_comb$spoken_lang <- lang_spo$action
 session_comb$secs_elapsed[is.na(session_comb$secs_elapsed)] <- 0
 
 #join session to train and test
@@ -103,33 +87,15 @@ summary(alldata_comb)
 sapply(alldata_comb, function(x) sum(is.na(x)))
 drops <- c("dac_yr", "tfa_yr","age")
 alldata_comb <- alldata_comb[, !(names(alldata_comb) %in% drops)]
-#index <- row.names(alldata_comb[is.na(alldata_comb$age), ])
-#alldata_comb$age[is.na(alldata_comb$age)] <- age$reconstr_age[row.names(age) %in% index]
-#alldata_comb$age <- as.integer(alldata_comb$age)
-#row.names(alldata_comb) <- alldata_comb$id
 train_comb <- merge(train, session_comb, by.x = "id", by.y = "user_id")
-#drops <- c("dac_yr", "tfa_yr")
 train_comb <- train_comb[, !(names(train_comb) %in% drops)]
-#row.names(train_comb) <- train_comb$id
-#train_comb$age[is.na(train_comb$age)] <- alldata_comb$age[row.names(alldata_comb) %in% row.names(train_comb[is.na(train_comb$age), ])]
 
-#train_1 <- train[-which(train$id %in% train_comb$id), ]
-#train_1 <- train_1[, !(names(train_1) %in% drops)]
 test_comb <- merge(test, session_comb, by.x = "id", by.y = "user_id")
 test_1 <- test[-which(test$id %in% test_comb$id), ]
-#row.names(test_comb) <- test_comb$id
-#test_comb$age[is.na(test_comb$age)] <- alldata_comb$age[row.names(alldata_comb) %in% row.names(test_comb[is.na(test_comb$age), ])]
 test_comb <- test_comb[, !(names(test_comb) %in% drops)]
-#merge session
-#sapply(test_comb, function(x) sum(is.na(x)))
-#train <- alldata[1:n, ]
 
-#test <- alldata[(n+1):m, ]
-
-#write.csv(alldata_comb, file = "alldata_comb.csv", row.names = F)
 write.csv(train_comb, file = "train_comb.csv", row.names = F)
 write.csv(train_comb, file = "train_comb_age.csv", row.names = F)
-#write.csv(train_1, file = "train_1.csv", row.names = F)
 write.csv(test_comb, file = "test_comb.csv", row.names = F)
 write.csv(test_comb, file = "test_comb_age.csv", row.names = F)
 write.csv(test_1, file = "test_1_age.csv", row.names = F)
@@ -146,13 +112,11 @@ test_1Hex <- h2o.importFile(path = normalizePath("test_1_age.csv"))
 splits <- h2o.splitFrame(train_combHex, c(0.6,0.2), seed = 111)
 train_comb <- h2o.assign(splits[[1]], "trainHex")
 valid_comb <- h2o.assign(splits[[2]], "validHex")
-#test_comb <- h2o.assign(splits[[3]], "testHex")
 features <- names(train_combHex)[-which(names(train_combHex) %in% c("id", "country","age"))]
 
 splits_1 <- h2o.splitFrame(trainHex, c(0.6,0.2), seed = 110)
 train_1 <- h2o.assign(splits_1[[1]], "train1Hex")
 valid_1 <- h2o.assign(splits_1[[2]], "valid1Hex")
-#test_1 <- h2o.assign(splits_1[[3]], "test1Hex")
 features_1 <- names(trainHex)[-which(names(trainHex) %in% c("id", "country","age"))]
 
 
@@ -221,6 +185,7 @@ xx <- xo[order(xo$id), ]
 final <- xx[, -2]
 colnames(final)[2] <- "country"
 rownames(final) <- NULL
+
 #submission <- data.frame(id= test$id, country = prediction$predict)
 write.csv(final, "submission_airbnb_after.csv", row.names = F)
 
